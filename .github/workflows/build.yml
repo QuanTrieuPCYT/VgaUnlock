@@ -1,0 +1,116 @@
+name: Build VgaUnlock
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-uefi:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout User Repository
+      uses: actions/checkout@v3
+      with:
+        path: 'src'
+
+    - name: Checkout EDK II (Tianocore)
+      uses: actions/checkout@v3
+      with:
+        repository: tianocore/edk2
+        path: 'edk2'
+        submodules: recursive
+
+    - name: Install Build Dependencies
+      run: |
+        sudo apt-get install --no-install-recommends -y build-essential uuid-dev iasl nasm python3-distutils gcc-multilib
+
+    - name: Setup UEFI Package in EDK2
+      run: |
+        mkdir -p edk2/VgaUnlockPkg
+        
+        cp src/VgaUnlock.c edk2/VgaUnlockPkg/
+        cp src/VgaUnlock.inf edk2/VgaUnlockPkg/
+
+    - name: Generate ReBarRevert.inf
+      run: |
+        cat <<EOF > edk2/VgaUnlockPkg/ReBarRevert.inf
+        [Defines]
+          INF_VERSION                    = 0x00010005
+          BASE_NAME                      = ReBarRevert
+          FILE_GUID                      = 6987936E-ED34-44db-AE97-1FA5E4ED2A16
+          MODULE_TYPE                    = UEFI_APPLICATION
+          VERSION_STRING                 = 1.0
+          ENTRY_POINT                    = UefiMain
+
+        [Sources]
+          ReBarRevert.c
+
+        [Packages]
+          MdePkg/MdePkg.dec
+
+        [LibraryClasses]
+          UefiApplicationEntryPoint
+          UefiLib
+          UefiBootServicesTableLib
+          MemoryAllocationLib
+
+        [Protocols]
+          gEfiPciIoProtocolGuid
+        EOF
+
+    - name: Generate DSC Configuration
+      run: |
+        cat <<EOF > edk2/VgaUnlockPkg/VgaUnlockPkg.dsc
+        [Defines]
+          PLATFORM_NAME                  = VgaUnlock
+          PLATFORM_GUID                  = 5a54d6b6-3406-4073-bd8d-6a0d09d3b44c
+          PLATFORM_VERSION               = 0.1
+          DSC_SPECIFICATION              = 0x00010005
+          OUTPUT_DIRECTORY               = Build/VgaUnlock
+          SUPPORTED_ARCHITECTURES        = X64
+          BUILD_TARGETS                  = RELEASE
+          SKUID_IDENTIFIER               = DEFAULT
+
+        [LibraryClasses]
+          UefiApplicationEntryPoint|MdePkg/Library/UefiApplicationEntryPoint/UefiApplicationEntryPoint.inf
+          UefiLib|MdePkg/Library/UefiLib/UefiLib.inf
+          UefiBootServicesTableLib|MdePkg/Library/UefiBootServicesTableLib/UefiBootServicesTableLib.inf
+          UefiRuntimeServicesTableLib|MdePkg/Library/UefiRuntimeServicesTableLib/UefiRuntimeServicesTableLib.inf
+          MemoryAllocationLib|MdePkg/Library/UefiMemoryAllocationLib/UefiMemoryAllocationLib.inf
+          DevicePathLib|MdePkg/Library/UefiDevicePathLib/UefiDevicePathLib.inf
+          BaseLib|MdePkg/Library/BaseLib/BaseLib.inf
+          BaseMemoryLib|MdePkg/Library/BaseMemoryLib/BaseMemoryLib.inf
+          PrintLib|MdePkg/Library/BasePrintLib/BasePrintLib.inf
+          PcdLib|MdePkg/Library/BasePcdLibNull/BasePcdLibNull.inf
+          DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf
+          RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf
+          StackCheckLib|MdePkg/Library/StackCheckLibNull/StackCheckLibNull.inf
+
+        [Components]
+          VgaUnlockPkg/VgaUnlock.inf
+        EOF
+
+    - name: Compile EDK2 BaseTools
+      run: |
+        make -C edk2/BaseTools
+
+    - name: Build UEFI Apps
+      working-directory: ./edk2
+      shell: bash
+      run: |
+        export WORKSPACE=$PWD
+        export PACKAGES_PATH=$PWD
+        source edksetup.sh
+        
+        build -a X64 -t GCC5 -p VgaUnlockPkg/VgaUnlockPkg.dsc -b RELEASE
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: VgaUnlock
+        path: |
+          edk2/Build/VgaUnlock/RELEASE_GCC5/X64/VgaUnlock.efi
